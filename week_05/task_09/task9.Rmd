@@ -1,0 +1,104 @@
+---
+title: "Task 9"
+author: "Logan Herrmeyer"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:  
+    keep_md: true
+    toc: true
+    toc_float: true
+    fig_height: 6
+    fig_width: 12
+    fig_align: 'center'
+---
+
+```{r, echo=FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readr)
+```
+
+## Task 9
+
+```{r, message = FALSE}
+stock_data <- read_rds(url("https://github.com/byuistats/data/blob/master/Dart_Expert_Dow_6month_anova/Dart_Expert_Dow_6month_anova.RDS?raw=true"))
+```
+
+### Time series plot
+
+```{r}
+stock_data2 <- stock_data %>%
+  # Make sure dates are consistently formatted
+  mutate(contest_period = str_replace(
+    contest_period, "Dec[.]", "December"
+  )) %>%
+  # Correct misspelling
+  mutate(contest_period = str_replace(
+    contest_period, "Febuary", "February"
+  )) %>%
+  separate(contest_period, into = c("start","end"),
+           sep = '-') %>%
+  # Go into row-wise mode for strings to work
+  rowwise() %>%
+  mutate(year_end = unlist(
+    strsplit(end,"[a-z](?=[0-9]{4}$)",perl=TRUE))[2]) %>%
+  mutate(month_end = unlist(
+    strsplit(end,"[0-9]{4}",perl=TRUE))[1]) %>%
+  mutate(date_end = as.Date(
+    paste(month_end, year_end, "10", sep = "-"),
+    format = "%B-%Y-%d")) %>%
+  ungroup()
+stock_data2 %>%
+  ggplot(mapping = aes(x = date_end, y = value)) +
+  geom_line(mapping = aes(color = variable)) +
+  xlab("Time") +
+  ylab("6 mo stock return (%)") +
+  guides(color = guide_legend("Group")) +
+  ggtitle("Stock return vs Time for each group")
+```
+
+### Tidy data
+
+```{r}
+tidy_stock <- stock_data %>%
+  # Make sure dates are consistently formatted
+  mutate(contest_period = str_replace(
+    contest_period, "Dec[.]", "December"
+  )) %>%
+  # Correct misspelling
+  mutate(contest_period = str_replace(
+    contest_period, "Febuary", "February"
+  )) %>%
+  separate(contest_period, into = c("start","end"),
+           sep = '-') %>%
+  # Go into row-wise mode for strings to work
+  rowwise() %>%
+  mutate(year_end = unlist(
+    strsplit(end,"[a-z](?=[0-9]{4}$)",perl=TRUE))[2]) %>%
+  mutate(month_end = unlist(
+    strsplit(end,"[0-9]{4}",perl=TRUE))[1]) %>%
+  ungroup()
+saveRDS(tidy_stock,"tidy_stock.rds")
+```
+
+### Final table
+
+```{r}
+stock_table <- tidy_stock %>%
+  # Get only the DJIA group
+  filter(variable == "DJIA") %>%
+  # Get only the columns we need
+  select(value, year_end, month_end) %>%
+  # Find NA's
+  complete(year_end, month_end) %>%
+  # Fill them in
+  mutate(value = replace_na(value, "-")) %>%
+  # Convert to wide form
+  pivot_wider(names_from = year_end, values_from = value) %>%
+  # Give the month column a better name
+  rename(Month = month_end) %>%
+  # And sort by month
+  arrange(match(Month,month.name))
+# Display as a knitr table
+knitr::kable(stock_table)
+```
