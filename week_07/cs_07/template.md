@@ -1,0 +1,67 @@
+---
+title: "Case Study 7"
+author: "Logan Herrmeyer"
+date: "June 04, 2021"
+output:
+  html_document:  
+    keep_md: true
+    toc: true
+    toc_float: true
+    fig_height: 6
+    fig_width: 12
+    fig_align: 'center'
+---
+
+
+
+## BYU vs other Utah schools
+
+
+```r
+library(pacman)
+pacman::p_load(tidyverse)
+pacman::p_load(Lahman)
+pacman::p_load(blscrapeR)
+pacman::p_load(scales)
+inflation_data <- inflation_adjust(base_year = 2020)
+adj_sal <- 
+    Salaries %>%
+    rowwise() %>%
+    mutate(sal_2020 = 
+             salary / 
+             inflation_data[
+               inflation_data$year == yearID,
+             ]$adj_value
+    ) %>%
+    ungroup()
+ut_schools <- 
+    Schools %>%
+    filter(state == "UT") %>%
+    select(schoolID,name_full)
+ut_players <- 
+    inner_join(CollegePlaying, ut_schools, by="schoolID")
+ut_player_sal <- 
+    inner_join(ut_players, adj_sal, by="playerID")
+```
+
+```r
+ut_player_sal %>%
+    ggplot(aes(
+      x=reorder(factor(name_full), -sal_2020, median),
+      y=sal_2020
+    )) +
+    geom_boxplot(aes(fill=factor(name_full))) +
+    theme_bw() +
+    theme(text = element_text(size = 20),
+          axis.text.x=element_text(angle=30,hjust=1)
+    ) +
+    theme(legend.position = "none") +
+    scale_y_continuous(labels = scales::dollar_format()) +
+    labs(
+        title = "Salary of professional baseball players from Utah schools",
+        x = "School",
+        y = "Salary (2020 dollars)"
+    )
+```
+
+![](template_files/figure-html/unnamed-chunk-3-1.png)<!-- -->
