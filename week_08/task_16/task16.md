@@ -20,7 +20,6 @@ output:
 ```r
 library(tidyverse)
 library(downloader)
-library(pander)
 library(stringi)
 
 download("http://scriptures.nephi.org/downloads/lds-scriptures.csv.zip", "temp.zip")
@@ -48,17 +47,15 @@ scripture_data %>%
       `Volume title` = volume_title,
       `Average word count` = avg_words
     ) %>%
-    pander()
+    knitr::kable()
 ```
 
 
--------------------------------------
-  Volume title    Average word count 
----------------- --------------------
- Book of Mormon         40.51        
 
- New Testament          22.71        
--------------------------------------
+|Volume title   | Average word count|
+|:--------------|------------------:|
+|Book of Mormon |           40.50863|
+|New Testament  |           22.70517|
 
 The Book of Mormon has an average verse length of 40.51 words, while the New Testament has a shorter average verse length of 22.71 words.
 
@@ -76,17 +73,15 @@ scripture_data %>%
       `Average mentions per verse` = avg_mentions,
       `Volume title`= volume_title
     ) %>%
-    pander()
+    knitr::kable()
 ```
 
 
----------------------------------------------
-  Volume title    Average mentions per verse 
----------------- ----------------------------
- Book of Mormon            0.02786           
 
- New Testament              0.1227           
----------------------------------------------
+|Volume title   | Average mentions per verse|
+|:--------------|--------------------------:|
+|Book of Mormon |                  0.0278619|
+|New Testament  |                  0.1226593|
 
 In average mentions per verse, the New Testament is much higher than the Book of Mormon, with 0.12 mentions per verse versus the Book of Mormon's 0.028 mentions per verse.
 
@@ -103,17 +98,15 @@ scripture_data %>%
         `Volume title` = volume_title,
         `Average mentions per word` = am
     ) %>%
-    pander()
+    knitr::kable()
 ```
 
 
---------------------------------------------
-  Volume title    Average mentions per word 
----------------- ---------------------------
- Book of Mormon           0.0007196         
 
- New Testament            0.005835          
---------------------------------------------
+|Volume title   | Average mentions per word|
+|:--------------|-------------------------:|
+|Book of Mormon |                 0.0007196|
+|New Testament  |                 0.0058354|
 
 In mean mentions per word (the proportion of the words that are "Jesus"), the New Testament is ahead again, with 0.58% of words being "Jesus", compared with the Book of Mormon's 0.072% of words.
 
