@@ -1,0 +1,402 @@
+---
+title: "Semester Project Exploratory Data Analysis"
+author: "Logan Herrmeyer"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+    toc_float: yes
+    fig_height: 6
+    fig_width: 12
+    fig_align: center
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(pacman)
+#devtools::install_github("deleetdk/USA.county.data")
+pacman::p_load(tidyverse, maps, tree, USA.county.data)
+pacman::p_load(rpart, rpart.plot, rattle, readxl)
+#data(USA_county_data)
+#d <- read_csv("https://github.com/Deleetdk/USA.county.data/blob/master/Scrape%20and%20tidy%20code/data/tidy_data.csv?raw=true")
+data(USA_county_data)
+d <- USA_county_data
+# Remove leftover statistical data and bad weather data
+# https://openpsych.net/paper/12/
+ex_cols = c("S","CA","MAR","CFS","ACFS","MeanALC","MaxALC","X","Y")
+d <- d %>%
+  select(-one_of(ex_cols)) %>%
+  select(!matches("_(PRCP|TMAX|TMIN|TAVG)")) %>%
+  select(!matches("_bins"))
+d <- d %>%
+  mutate(prec_pop = Total.Population/precincts)
+
+# Get area/pop dens data
+area <- read_excel("land_area.xls")
+county_area <- area %>%
+    rename(land_area=LND010200D) %>%
+    mutate(fips=as.numeric(STCOU)) %>%
+    select(fips,land_area)
+d <- inner_join(d, county_area, by="fips")
+d <- d %>%
+  mutate(pop_dens = Total.Population/land_area) %>%
+  mutate(log_pd = log(pop_dens)) %>%
+  mutate(log_pop = log(Total.Population)) %>%
+  mutate(log_pc = log(precincts)) %>%
+  mutate(ppc = precincts/Total.Population) %>%
+  filter(land_area > 0) %>%
+  filter(!is.na(pop_dens)) %>%
+  filter(!is.infinite(pop_dens))
+```
+
+## Correlations
+
+### For all variables
+
+```{r}
+d_numeric <- d[, unlist(lapply(d, is.numeric))]
+correlations <- as.data.frame(cor(
+  d_numeric, use="pairwise.complete.obs"
+))
+cor_df_1 <- correlations %>% 
+  select(rep16_frac) %>%
+  arrange(-abs(rep16_frac))
+knitr::kable(cor_df_1 %>% head(15))
+```
+
+### Not counting previous voting
+
+```{r}
+d_numeric <- d[, unlist(lapply(d, is.numeric))]
+d_cor <- d_numeric %>% 
+    select(!starts_with("vote")) %>%
+    select(!matches("...(08|12)_frac.*")) %>%
+    select(!matches("[a-z][0-9][0-9]$")) %>%
+    select(!ends_with("frac2"))
+d_cor <- 
+  d_cor[,!grepl("(?<!rep)16_frac.*",colnames(d_cor),perl=T)]
+
+correlations_2 <- as.data.frame(cor(
+  d_cor, use="pairwise.complete.obs", method="pearson"
+))
+
+cor_df_2 <- correlations_2 %>% 
+  select(rep16_frac) %>%
+  arrange(-abs(rep16_frac)) %>%
+  distinct(rep16_frac, .keep_all = T)
+knitr::kable(cor_df_2 %>% head(15))
+```
+
+### Using Spearman method
+
+```{r}
+d_numeric <- d[, unlist(lapply(d, is.numeric))]
+d_cor <- d_numeric %>% 
+    select(!starts_with("vote")) %>%
+    select(!matches("...(08|12)_frac.*")) %>%
+    select(!matches("[a-z][0-9][0-9]$")) %>%
+    select(!ends_with("frac2"))
+d_cor <- 
+  d_cor[,!grepl("(?<!rep)16_frac.*",colnames(d_cor),perl=T)]
+
+correlations_3 <- as.data.frame(cor(
+  d_cor, use="pairwise.complete.obs", method="spearman"
+))
+
+cor_df_3 <- correlations_3 %>% 
+  select(rep16_frac) %>%
+  arrange(-abs(rep16_frac)) %>%
+  distinct(rep16_frac, .keep_all = T)
+knitr::kable(cor_df_3 %>% head(15))
+```
+
+## Preparing the data for prediction
+
+```{r}
+d_numeric <- d[, unlist(lapply(d, is.numeric))]
+d_numeric <- d_numeric %>%
+  rowwise() %>%
+  mutate(dem16_win = (rep16_frac2 < dem16_frac2)) %>%
+  ungroup()
+
+d_cor <- d_numeric %>% 
+    select(!starts_with("vote")) %>%
+    select(!matches("...(08|12)_frac.*")) %>%
+    select(!matches("[a-z][0-9][0-9]$")) %>%
+    select(!ends_with("frac2"))
+d_cor <- 
+  d_cor[,!grepl("(?<!rep)16_frac.*",colnames(d_cor),perl=T)]
+
+spearman_cols <- 
+  row.names(as.data.frame(cor(
+    d_cor, use="pairwise.complete.obs", method="spearman"
+  )) %>%
+  select(rep16_frac) %>%
+  arrange(-abs(rep16_frac)) %>%
+  head(15) %>%
+  distinct(rep16_frac, .keep_all = T))
+
+pearson_cols <- 
+  row.names(as.data.frame(cor(
+    d_cor, use="pairwise.complete.obs", method="pearson"
+  )) %>%
+  select(rep16_frac) %>%
+  arrange(-abs(rep16_frac)) %>%
+  head(20) %>%
+  distinct(rep16_frac, .keep_all = T))
+
+#pearson_cols <- c("White","log_pd")
+important_cols <- c(pearson_cols, "dem16_win","fips")
+# Sampling will bias towards the less common D counties, 
+# increasing D recall&precision but decreasing overall acc 
+d_dem <- d_numeric %>% filter(dem16_win) #%>% sample_n(480)
+d_rep <- d_numeric %>% filter(!dem16_win) #%>% sample_n(480)
+d_balanced <- bind_rows(d_dem, d_rep)
+d_ml <- d_balanced %>%
+  select(important_cols) %>%
+  select(!matches("_frac.*")) %>%
+  select(!starts_with("vote")) %>%
+  select(!matches("[a-z][0-9][0-9]$"))
+d_train <- d_ml %>% sample_frac(0.8)
+d_test <- anti_join(d_ml, d_train, by="fips")
+# Don't include the fips col
+d_train <- d_train %>% select(!fips)
+d_test <- d_test %>% select(!fips)
+```
+
+## Decision tree
+
+```{r}
+my_tree <- rpart(
+  as.factor(dem16_win) ~ ., data=d_train, method="class",
+  control=rpart.control(maxdepth=10,xval=30))
+# 0.01-0.025 seems to be the best complexity parameter value
+# Now 0.013-0.017 seems to be about the best
+# 0.11 seems close to optimal, but pruning doesn't seem to help
+# much
+my_tree <- prune(my_tree,cp=0.011)
+d_tst_pred <- predict(my_tree, d_test, type="class")
+```
+```{r}
+# Calculate evaluation metrics
+conf_matrix <- 
+  as.matrix(table(predicted = d_tst_pred, actual = d_test$dem16_win))
+num_instances <- sum(conf_matrix)
+num_classes <- nrow(conf_matrix)
+row_sums <- apply(conf_matrix, 1, sum)
+col_sums <- apply(conf_matrix, 2, sum)
+diags <- diag(conf_matrix)
+accuracy <- sum(diags) / num_instances
+precision <- diags / col_sums
+recall <- diags / row_sums
+
+d_pred <- predict(my_tree, d_ml, type="class")
+d_matrix <- 
+  as.matrix(table(predicted = d_pred, actual = d_ml$dem16_win))
+d_acc <- sum(diag(d_matrix)) / sum(d_matrix)
+# Print results
+cat("All accuracy",d_acc)
+cat("Accuracy", accuracy)
+cat("Precision", precision)
+cat("Recall", recall)
+print("Confusion matrix:")
+print(conf_matrix)
+print("Training confusion matrix:")
+d_trn_pred <- predict(my_tree, d_train, type="class")
+table(predicted = d_trn_pred, actual = d_train$dem16_win)
+```
+
+In the decision tree, it is better NOT to balance the dataset (equal number of R and D counties) because then it will be biased towards the less common D counties.
+
+```{r}
+fancyRpartPlot(my_tree)
+```
+
+```{r}
+#printcp(my_tree)
+plotcp(my_tree)
+#my_tree <- prune(my_tree,cp=0.017)
+fancyRpartPlot(my_tree)
+```
+
+### Graphing Results 
+
+
+```{r}
+d_wins <- d %>%
+  rowwise() %>%
+  mutate(dem16_win = (rep16_frac < dem16_frac)) %>%
+  ungroup()
+d_preds <- d_wins %>%
+  select(fips, dem16_win)
+predictions <- 
+  as.data.frame(predict(my_tree, d_wins, type="class")) %>%
+  pull()
+d_preds$pred_win = predictions
+c_fips <- county.fips %>%
+  separate(polyname, c("region","subregion"), sep=",")
+cty_shape_fips <-
+  inner_join(map_data("county"),c_fips,by=c("region","subregion"))
+d_graph <- inner_join(d_preds,cty_shape_fips,by="fips")
+```
+```{r}
+ggplot(d_graph) +
+    geom_polygon(aes(x=long,y=lat,group=group,fill=dem16_win),
+                 color="white") +
+    ggtitle("Actual 2016 results")
+```
+```{r}
+ggplot(d_graph) +
+    geom_polygon(aes(x=long,y=lat,group=group,fill=pred_win),
+                 color="white") +
+    ggtitle("Predicted 2016 results")
+```
+
+## Linear models
+
+### % White vs % R
+```{r}
+ggplot(aes(x=White,y=rep16_frac),data=d) +
+    geom_point() +
+    geom_smooth(method="lm") +
+    theme_bw()
+```
+
+### Pop dens and %R
+
+```{r}
+ggplot(aes(x=pop_dens,y=rep16_frac),data=d) +
+    geom_point() +
+    geom_smooth(method="lm") +
+    theme_bw()
+```
+
+```{r}
+p <-
+  cor(d$pop_dens, d$rep16_frac, 
+      method="pearson", use="pairwise.complete.obs")
+s <-
+  cor(d$pop_dens, d$rep16_frac, 
+      method="spearman", use="pairwise.complete.obs")
+mat <- matrix(c(p,p^2,s,s^2),nrow=2,ncol=2,byrow=T,
+              dimnames=list(c("Pearson","Spearman"),
+                            c("Coefficient","Coef^2"))
+              )
+knitr::kable(mat)
+```
+
+Variables are monotonically related but not linear.
+
+However, a log scale improves things:
+
+```{r}
+ggplot(aes(x=pop_dens,y=rep16_frac),data=d) +
+    geom_point() +
+    geom_smooth(method="lm") +
+    theme_bw() +
+    scale_x_log10()
+```
+
+### Total pop and %R
+
+```{r}
+ggplot(aes(x=Total.Population,y=rep16_frac),data=d) +
+    geom_point() +
+    geom_smooth(method="lm") +
+    theme_bw()
+```
+
+```{r}
+p <-
+  cor(d$Total.Population, d$rep16_frac, 
+      method="pearson", use="pairwise.complete.obs")
+s <-
+  cor(d$Total.Population, d$rep16_frac, 
+      method="spearman", use="pairwise.complete.obs")
+mat <- matrix(c(p,p^2,s,s^2),nrow=2,ncol=2,byrow=T,
+              dimnames=list(c("Pearson","Spearman"),
+                            c("Coefficient","Coef^2"))
+              )
+knitr::kable(mat)
+```
+
+Again, variables have a monotonic relationship but not linear. A log scale works:
+
+```{r}
+ggplot(aes(x=Total.Population,y=rep16_frac),data=d) +
+    geom_point() +
+    geom_smooth(method="lm") +
+    theme_bw() +
+    scale_x_log10()
+```
+
+### African American and %R
+
+```{r}
+ggplot(aes(x=Black,y=rep16_frac),data=d) +
+    geom_point() +
+    geom_smooth(method="lm") +
+    theme_bw()
+```
+
+### Mixedness and %R
+
+```{r}
+ggplot(aes(x=Mixedness,y=rep16_frac),data=d) +
+    geom_point() +
+    geom_smooth(method="lm") +
+    theme_bw()
+```
+
+### Education and %R
+
+```{r}
+ggplot(aes(x=At.Least.Bachelor.s.Degree,y=rep16_frac),data=d) +
+    geom_point() +
+    geom_smooth(method="lm") +
+    theme_bw()
+```
+
+### Violent crime and %R
+
+```{r}
+ggplot(aes(x=Violent.crime,y=rep16_frac),data=d) +
+    geom_point() +
+    geom_smooth(method="lm") +
+    theme_bw()
+```
+
+### Construction and % R
+
+```{r, message = F}
+ggplot(aes(x=Construction.extraction.maintenance.and.repair.occupations,y=rep16_frac),data=d) +
+    geom_point() +
+    geom_smooth(method="lm") +
+    theme_bw()
+```
+
+
+### Age and %R
+
+```{r}
+ggplot(aes(x=median_age,y=rep16_frac),data=d) +
+    geom_point() +
+    geom_smooth(method="lm") +
+    theme_bw()
+```
+
+### Precints and %R
+
+```{r}
+ggplot(aes(x=precincts,y=rep16_frac),data=d) +
+    geom_point() +
+    geom_smooth(method="lm") +
+    theme_bw()
+```

@@ -1,0 +1,380 @@
+---
+title: "Semester Project Exploratory Data Analysis"
+author: "Logan Herrmeyer"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+    toc_float: yes
+    fig_height: 6
+    fig_width: 12
+    fig_align: center
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+seed <- 86753091
+```
+
+```{r}
+library(pacman)
+#devtools::install_github("deleetdk/USA.county.data")
+pacman::p_load(tidyverse, maps, tree, USA.county.data)
+pacman::p_load(rpart, rpart.plot, rattle, readxl, caret)
+#data(USA_county_data)
+#d <- read_csv("https://github.com/Deleetdk/USA.county.data/blob/master/Scrape%20and%20tidy%20code/data/tidy_data.csv?raw=true")
+data(USA_county_data)
+d <- USA_county_data
+# Remove leftover statistical data and bad weather data
+# https://openpsych.net/paper/12/
+ex_cols = c("S","CA","MAR","CFS","ACFS","MeanALC","MaxALC","X","Y","X1")
+d <- d %>%
+  select(-one_of(ex_cols)) %>%
+  select(!matches("_(PRCP|TMAX|TMIN|TAVG)")) %>%
+  select(!matches("_bins"))
+d <- d %>%
+  mutate(prec_pop = Total.Population/precincts)
+
+# Get area/pop dens data
+area <- read_excel("land_area.xls")
+county_area <- area %>%
+    rename(land_area=LND010200D) %>%
+    mutate(fips=as.numeric(STCOU)) %>%
+    select(fips,land_area)
+d <- inner_join(d, county_area, by="fips")
+d <- d %>%
+  mutate(pop_dens = Total.Population/land_area) %>%
+  mutate(log_pd = log(pop_dens)) %>%
+  mutate(log_pop = log(Total.Population)) %>%
+  mutate(log_pc = log(precincts)) %>%
+  mutate(ppc = precincts/Total.Population) %>%
+  filter(land_area > 0) %>%
+  filter(!is.na(pop_dens)) %>%
+  filter(!is.infinite(pop_dens))
+d <- d %>% filter(!is.na(dem16_frac2))
+```
+
+## Correlations
+
+### For all variables
+
+```{r}
+d_numeric <- d[, unlist(lapply(d, is.numeric))]
+correlations <- as.data.frame(cor(
+  d_numeric, use="pairwise.complete.obs"
+))
+cor_df_1 <- correlations %>% 
+  select(rep16_frac) %>%
+  arrange(-abs(rep16_frac))
+knitr::kable(cor_df_1 %>% head(15))
+```
+
+### Not counting previous voting
+
+```{r}
+d_numeric <- d[, unlist(lapply(d, is.numeric))]
+d_cor <- d_numeric %>% 
+    select(!starts_with("vote")) %>%
+    select(!matches("...(08|12)_frac.*")) %>%
+    select(!matches("[a-z][0-9][0-9]$")) %>%
+    select(!ends_with("frac2"))
+d_cor <- 
+  d_cor[,!grepl("(?<!rep)16_frac.*",colnames(d_cor),perl=T)]
+
+correlations_2 <- as.data.frame(cor(
+  d_cor, use="pairwise.complete.obs", method="pearson"
+))
+
+cor_df_2 <- correlations_2 %>% 
+  select(rep16_frac) %>%
+  arrange(-abs(rep16_frac)) %>%
+  distinct(rep16_frac, .keep_all = T)
+knitr::kable(cor_df_2 %>% head(15))
+```
+
+### Using Spearman method
+
+```{r}
+d_numeric <- d[, unlist(lapply(d, is.numeric))]
+d_cor <- d_numeric %>% 
+    select(!starts_with("vote")) %>%
+    select(!matches("...(08|12)_frac.*")) %>%
+    select(!matches("[a-z][0-9][0-9]$")) %>%
+    select(!ends_with("frac2"))
+d_cor <- 
+  d_cor[,!grepl("(?<!rep)16_frac.*",colnames(d_cor),perl=T)]
+
+correlations_3 <- as.data.frame(cor(
+  d_cor, use="pairwise.complete.obs", method="spearman"
+))
+
+cor_df_3 <- correlations_3 %>% 
+  select(rep16_frac) %>%
+  arrange(-abs(rep16_frac)) %>%
+  distinct(rep16_frac, .keep_all = T)
+knitr::kable(cor_df_3 %>% head(15))
+```
+
+## Linear correlation graphs
+
+```{r, fig.keep = "all", warning = FALSE, message = FALSE}
+lin_vars <- rownames(cor_df_2 %>% head(4))
+for(var in lin_vars){
+  plot <- ggplot(aes_string(x=var,y="rep16_frac"),data=d) +
+    geom_point() +
+    geom_smooth(method="lm") +
+    theme_bw() +
+    labs(
+      title = paste("Republican fraction in 2016 vs",var,
+                    " r=",round(cor_df_2[var,],3))
+    )
+  print(plot)
+}
+```
+
+## Other monotonic correlations
+
+
+```{r, fig.keep = "all", warning = FALSE, message = FALSE}
+cor_m_df <- inner_join(
+  (cor_df_3 %>% mutate(nam = rownames(cor_df_3))),
+  (cor_df_2 %>% mutate(nam = rownames(cor_df_2))),
+  by="nam"
+) %>% filter(abs(rep16_frac.x) > abs(rep16_frac.y))
+m_vars <- cor_m_df %>%
+  arrange(rep16_frac.x) %>%
+  head(4) %>%
+  pull(nam)
+for(var in m_vars){
+  plot <- ggplot(aes_string(x=var,y="rep16_frac"),data=d) +
+    geom_point() +
+    geom_smooth(method="lm") +
+    theme_bw() +
+    labs(
+      title = paste("Republican fraction in 2016 vs",var,
+                    " r_s=",round(cor_df_2[var,],3))
+    )
+  print(plot)
+}
+```
+
+## Preparing the data for prediction
+
+```{r}
+d_numeric <- d[, unlist(lapply(d, is.numeric))]
+d_numeric <- d_numeric %>%
+  rowwise() %>%
+  mutate(dem16_win = (rep16_frac2 < dem16_frac2)) %>%
+  ungroup()
+d_cor <- d_numeric %>% 
+    select(!starts_with("vote")) %>%
+    select(!matches("...(08|12)_frac.*")) %>%
+    select(!matches("[a-z][0-9][0-9]$")) %>%
+    select(!ends_with("frac2"))
+d_cor <- 
+  d_cor[,!grepl("(?<!rep)16_frac.*",colnames(d_cor),perl=T)]
+
+spearman_cols <- 
+  row.names(as.data.frame(cor(
+    d_cor, use="pairwise.complete.obs", method="spearman"
+  )) %>%
+  select(rep16_frac) %>%
+  arrange(-abs(rep16_frac)) %>%
+  head(15) %>%
+  distinct(rep16_frac, .keep_all = T))
+
+pearson_cols <- 
+  row.names(as.data.frame(cor(
+    d_cor, use="pairwise.complete.obs", method="pearson"
+  )) %>%
+  select(rep16_frac) %>%
+  arrange(-abs(rep16_frac)) %>%
+  head(20) %>%
+  distinct(rep16_frac, .keep_all = T))
+
+# Just these cols give about 91% testing acc
+#pearson_cols <- c("White","log_pd","Black","Hispanic")
+important_cols <- c(pearson_cols, "dem16_win","fips")
+# Sampling will bias towards the less common D counties, 
+# increasing D recall&precision but decreasing overall acc 
+d_dem <- d_numeric %>% filter(dem16_win) #%>% sample_n(480)
+d_rep <- d_numeric %>% filter(!dem16_win) #%>% sample_n(480)
+d_balanced <- bind_rows(d_dem, d_rep)
+d_ml <- d_balanced %>%
+  #select(important_cols) %>%
+  select(!matches("_frac.*")) %>%
+  select(!starts_with("vote")) %>%
+  select(!matches("[a-z][0-9][0-9]$"))
+# Remove cols with NA
+d_ml <- d_ml %>%
+  select_if(~ !any(is.na(.)))
+# Get training data splits
+set.seed(seed)
+train_index <- createDataPartition(
+  d_ml$log_pop, p = 0.8, list = F, times = 1
+)
+d_train <- d_ml[train_index,]
+d_test <- d_ml[-train_index,]
+# This will be used for graphing
+d_wins <- d %>%
+  rowwise() %>%
+  mutate(dem16_win = (rep16_frac2 < dem16_frac2)) %>%
+  ungroup()
+d_preds <- d_wins %>%
+  select(fips, dem16_win)
+```
+
+## Decision tree
+
+```{r}
+ctrl <- trainControl(method = "repeatedcv", number = 10,
+                     repeats = 3, savePredictions = "final")
+my_tree <- train(as.factor(dem16_win) ~ .,
+                 data=d_train,
+                 method="rpart",
+                 trControl = ctrl,
+                 control=rpart.control(maxdepth=6))
+d_tst_pred <- predict(my_tree, d_test, type="raw")
+d_pred <- predict(my_tree, d_ml, type="raw")
+# 0.01-0.025 seems to be the best complexity parameter value
+# Now 0.013-0.017 seems to be about the best
+# 0.11 seems close to optimal, but pruning doesn't seem to help
+# much
+#my_tree <- prune(my_tree,cp=0.011)
+d_tst_pred <- predict(my_tree, d_test, type="raw")
+d_pred <- predict(my_tree, d_ml, type="raw")
+```
+
+### Evalulation Metrics
+
+```{r}
+# Calculate evaluation metrics
+print(confusionMatrix(
+  data=factor(d_tst_pred), reference=factor(d_test$dem16_win)))
+print(confusionMatrix(
+  data=factor(d_pred), reference=factor(d_ml$dem16_win)))
+st <- my_tree$pred %>%
+    mutate(tru = (pred == obs)*1) %>%
+    group_by(Resample) %>%
+    summarise(acc = sum(tru)/n()) %>%
+    pull(acc)
+knitr::kable(unclass(summary(st)),caption="CV accuracy")
+```
+
+In the decision tree, it is better NOT to balance the dataset (equal number of R and D counties) because then it will be biased towards the less common D counties.
+
+```{r}
+fancyRpartPlot(my_tree$finalModel)
+```
+
+### Graphing Results 
+
+
+```{r}
+predictions <- 
+  as.data.frame(predict(my_tree, d_wins, type="raw")) %>%
+  pull()
+d_preds$pred_win = predictions
+c_fips <- county.fips %>%
+  separate(polyname, c("region","subregion"), sep=",")
+cty_shape_fips <-
+  inner_join(map_data("county"),c_fips,by=c("region","subregion"))
+d_graph <- inner_join(d_preds,cty_shape_fips,by="fips")
+```
+```{r}
+ggplot(d_graph) +
+    geom_polygon(aes(x=long,y=lat,group=group,fill=dem16_win),
+                 color="white") +
+    ggtitle("Actual 2016 results")
+```
+```{r}
+ggplot(d_graph) +
+    geom_polygon(aes(x=long,y=lat,group=group,fill=pred_win),
+                 color="white") +
+    ggtitle("Predicted 2016 results (decision tree model)")
+```
+
+## Linear regression
+
+```{r}
+# Create the model
+#d_ml_l <- d_numeric %>% 
+#    select(!starts_with("vote")) %>%
+#    select(!matches("...(08|12|16)_frac.*")) %>%
+#    select(!matches("[a-z][0-9][0-9]$"))
+d_ml_l <- d_ml %>% select(!dem16_win)
+d_ml_l <- 
+  inner_join(d_ml_l, 
+             (d %>% select(fips,dem16_frac2)),
+             by="fips")
+set.seed(seed)
+train_index <- createDataPartition(
+  d_ml$log_pop, p = 0.8, list = F, times = 1
+)
+d_train_l <- d_ml_l[train_index,]
+d_test_l <- d_ml_l[-train_index,]
+# Teen birth data seems hard to come by
+#mylm <-
+#  lm(dem16_frac2 ~ White + Black + Graduate.Degree + log_pd + lat + White:lat + median_age + White:Black + White:Hispanic + White:Graduate.Degree + White:lon, data=d_train_l)
+ctrl <- trainControl(method = "repeatedcv", 
+                     number = 10,
+                     repeats = 3, 
+                     savePredictions = "final")
+mylm <- train(dem16_frac2 ~ .,  data=d_train_l, method="lm", trControl=ctrl)
+
+
+# Predict
+thresh <- 0.5
+d_tst_pred_l <- (predict(mylm, d_test_l) > thresh)
+d_pred_l <- (predict(mylm, d_ml_l) > thresh)
+```
+
+
+### Evalulation metrics
+```{r}
+# Get evaluation metrics and show them
+print(confusionMatrix(
+  data=factor(d_tst_pred_l),
+  reference=factor(d_test_l$dem16_frac2 > thresh)))
+  
+print(confusionMatrix(
+  data=factor(d_pred_l), reference=factor(d_ml_l$dem16_frac2 > thresh)))
+
+st <- mylm$pred %>%
+    mutate(tru = (
+      (pred > thresh) == (obs > thresh)*1)) %>%
+    group_by(Resample) %>%
+    summarise(acc = sum(tru)/n()) %>%
+    pull(acc)
+knitr::kable(unclass(summary(st)),caption="CV accuracy")
+```
+
+### Graphing results
+
+```{r}
+predictions <- 
+  as.data.frame((predict(mylm, d_wins) > thresh)) %>%
+  pull()
+d_preds$pred_win = predictions
+c_fips <- county.fips %>%
+  separate(polyname, c("region","subregion"), sep=",")
+cty_shape_fips <-
+  inner_join(map_data("county"),c_fips,by=c("region","subregion"))
+d_graph_l <- inner_join(d_preds,cty_shape_fips,by="fips")
+```
+```{r}
+ggplot(d_graph_l) +
+    geom_polygon(aes(x=long,y=lat,group=group,fill=dem16_win),
+                 color="white") +
+    ggtitle("Actual 2016 results")
+```
+```{r}
+ggplot(d_graph_l) +
+    geom_polygon(aes(x=long,y=lat,group=group,fill=pred_win),
+                 color="white") +
+    ggtitle("Predicted 2016 results (linear model)")
+```
