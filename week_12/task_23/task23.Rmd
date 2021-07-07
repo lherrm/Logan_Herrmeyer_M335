@@ -1,0 +1,42 @@
+---
+title: "Task 23"
+author: "Logan Herrmeyer"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:  
+    keep_md: true
+    toc: true
+    toc_float: true
+    fig_height: 6
+    fig_width: 12
+    fig_align: 'center'
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(sf)
+library(USAboundaries)
+le <- read_csv("us_life_exp.csv")
+```
+
+## Visualization
+
+```{r}
+states <- us_states()
+le_st <- le %>% 
+    mutate(stusps = state.abb[match(State,state.name)])
+states_le <- inner_join(le_st, states, by="stusps")
+ggplot(states_le) +
+    geom_sf(aes(geometry=geometry,fill=overall)) +
+    xlim(-170,-70) +
+    theme_bw() +
+    scale_fill_continuous(name="Life expectancy (years)") +
+    labs(
+        X="",y="",
+        title = "Life expectancy in US states in 2021"
+    )
+```
