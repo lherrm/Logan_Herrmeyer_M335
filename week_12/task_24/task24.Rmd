@@ -1,0 +1,49 @@
+---
+title: "Task 24"
+author: "Logan Herrmeyer"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:  
+    keep_md: true
+    toc: true
+    toc_float: true
+    fig_height: 6
+    fig_width: 12
+    fig_align: 'center'
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(pacman)
+pacman::p_load(
+  tidyverse, dygraphs, DT, tidyquant, timetk, lubridate)
+kr <- tidyquant::tq_get("KR") %>%
+  filter(date >= today() - years(5))
+```
+
+## Kroger Stock Price
+
+```{r}
+dygraph(xts(kr$adjusted,kr$date),
+        main="Kroger stock price")
+```
+
+## Kroger investment returns
+
+```{r}
+dygraph(xts(kr$adjusted,kr$date), 
+        main="Value of $10,000 invested in Kroger in 2016") %>%
+    dyRebase(10000) %>%
+    dyAnnotation("2017-06-14","A") %>%
+    dyAnnotation("2017-09-12","B")
+```
+A: [Stock price drops](https://www.fool.com/investing/2017/07/05/why-the-kroger-co-stock-plunged-217-in-june.aspx) because earnings were only average even with increased revenue, and Amazon acquired Whole Foods.
+
+B: [Stock price drops](https://www.cnbc.com/2018/09/13/kroger-shares-crash-as-sales-dissapoint.html) because sales were less than expected.
+
+## Summary
+
+The first graph shows the stock price of Kroger over the last five years, and the second shows the value of $10,000 invested in Kroger over the past five years, with points of significant price movement. I picked those points because those are the points where I could find information on the cause of the price movement.
