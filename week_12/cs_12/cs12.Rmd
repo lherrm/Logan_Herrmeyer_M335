@@ -1,0 +1,79 @@
+---
+title: "Case Study 12"
+author: "Logan Herrmeyer"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:  
+    keep_md: true
+    toc: true
+    toc_float: true
+    fig_height: 6
+    fig_width: 12
+    fig_align: 'center'
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message = FALSE}
+library(tidyverse)
+library(tidyquant)
+library(dygraphs)
+library(lubridate)
+library(xts)
+library(timetk)
+tickers_today <- 
+  c("CXW", "F", "GM", "KR", "WDC", "NKE","T", "WDAY", "WFC", "WMT")
+sdata <- tq_get(tickers_today)
+```
+
+## Stock performances
+
+```{r}
+cur_stock <- sdata %>% filter(symbol == tickers_today[1])
+stocks <- xts(cur_stock$adjusted, cur_stock$date)
+names(stocks) <- tickers_today[1]
+for(ticker in tickers_today){
+  cur_stock <- sdata %>% filter(symbol == ticker)
+  my_xts <- xts(cur_stock$adjusted, cur_stock$date)
+  names(my_xts) <- ticker
+  stocks <- cbind(stocks, my_xts)
+}
+stocks <- subset(stocks,select=-c(CXW.1))
+```
+
+### Visualization 1
+
+```{r}
+dygraph(stocks) %>%
+    dyHighlight(highlightCircleSize = 5,
+                highlightSeriesBackgroundAlpha = 0.2,
+                hideOnMouseOut = F)
+```
+
+### Visualization 2
+
+```{r}
+dygraph(stocks) %>%
+    dyRangeSelector(dateWindow = c("2019-01-01","2021-07-01"))
+```
+
+## Volume graphic
+
+```{r}
+ggplot(sdata %>% filter(date > "2016-01-01" & symbol=="GM")) +
+    geom_line(aes(x=date,y=close),color="blue") +
+    geom_line(aes(x=date,y=volume/2e6),color="gray") +
+    theme_bw() +
+    labs(
+        title="GM stock price and volume",
+        subtitle="Stock close price (blue) and volume (gray)"
+    )
+```
+
+The question that this graph leads me to is "How is volume related to large changes in stock price?"
+
+## Summary
+
+The first 2 graphics use the interactive dygraph library to show prices for different stocks from 2011 to present. The first graph allows the user to hover over a line to focus on it (each line is a different stock). The second graph allows the user to change the window of time of the stock price to get a better understanding of how the stock prices changes over time. Finally, the last graph shows the stock price of GM and its volume per day (volume is the number of shares bought or sold). I chose just one stock for that graph to be clear to the reader.
